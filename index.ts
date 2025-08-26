@@ -3,10 +3,6 @@ import http from "http";
 import { createClient } from "redis";
 import { v4 as uuidv4 } from "uuid";
 
-function getArrayFirstElement<T>(arr: T[]) {
-  return arr[0];
-}
-
 const server = http.createServer();
 const wss = new WebSocketServer({ server });
 const clients = new Map();
