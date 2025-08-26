@@ -7,6 +7,8 @@ const server = http.createServer();
 const wss = new WebSocketServer({ server });
 const clients = new Map();
 
+const port = parseInt(process.env.PORT || "8080");
+
 wss.on("connection", (ws) => {
   ws.on("message", (data) => {
     let msg;
@@ -104,7 +106,7 @@ async function startServer() {
     }
   });
 
-  server.listen(8080, () => {
+  server.listen(port, () => {
     console.log("WS server listening on ws://localhost:8080");
   });
 }

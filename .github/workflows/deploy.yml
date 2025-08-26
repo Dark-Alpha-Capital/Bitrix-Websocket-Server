@@ -46,7 +46,7 @@ jobs:
             --platform managed \
             --region ${{ env.REGION }} \
             --allow-unauthenticated \
-            --set-env-vars "REDIS_URL=${{ secrets.REDIS_URL }}" \
+            --set-env-vars "REDIS_URL=${{ secrets.REDIS_URL }}, NODE_ENV=production" \
             --timeout=900s \
             --port=8080 \
             --cpu=1 \
