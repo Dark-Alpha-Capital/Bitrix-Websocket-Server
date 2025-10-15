@@ -14,5 +14,8 @@ COPY . .
 # Expose the port your app runs on
 EXPOSE 8080
 
+# Set environment variable for port
+ENV PORT=8080
+
 # Start the server using Bun
 CMD ["bun", "index.ts"]

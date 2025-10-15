@@ -41,8 +41,9 @@ redis.on("message", (_channel, msg) => {
 });
 
 // Start WebSocket server
+const port = process.env.PORT || 8081;
 Bun.serve({
-  port: 8081,
+  port: parseInt(port.toString()),
   fetch(req, server) {
     if (server.upgrade(req)) return;
     return new Response("WebSocket server", { status: 200 });
@@ -88,4 +89,4 @@ Bun.serve({
   },
 });
 
-console.log("✅ WebSocket server running on ws://localhost:8081");
+console.log(`✅ WebSocket server running on ws://localhost:${port}`);
