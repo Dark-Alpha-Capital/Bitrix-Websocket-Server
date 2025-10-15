@@ -1,92 +1,91 @@
-// server.ts
-import WebSocket, { WebSocketServer } from "ws";
-import http from "http";
-import { createClient } from "redis";
+// WebSocket server for real-time job updates
+import type { ServerWebSocket } from "bun";
+import Redis from "ioredis";
 
-type WS = WebSocket & { userId?: string };
+const redis = new Redis(process.env.REDIS_URL!);
 
-const server = http.createServer();
-const wss = new WebSocketServer({ server });
-const clients = new Map<string, Set<WS>>();
+type WS = ServerWebSocket<unknown>;
 
-function add(userId: string, ws: WS) {
-  let set = clients.get(userId);
-  if (!set) {
-    set = new Set();
-    clients.set(userId, set);
-  }
-  ws.userId = userId;
-  set.add(ws);
-}
+// Map: WebSocket → clientId
+const clientIds = new Map<WS, string>();
 
-function remove(ws: WS) {
-  const id = ws.userId;
-  if (!id) return;
-  const set = clients.get(id);
-  if (!set) return;
-  set.delete(ws);
-  if (set.size === 0) clients.delete(id);
-}
+// Map: WebSocket → Set of jobIds
+const clientJobs = new Map<WS, Set<string>>();
 
-function send(userId: string, payload: unknown) {
-  const set = clients.get(userId);
-  if (!set) return;
-  const data = JSON.stringify(payload);
-  for (const ws of set) if (ws.readyState === WebSocket.OPEN) ws.send(data);
-}
+// Map: jobId → WebSocket
+const jobSubscriptions = new Map<string, WS>();
 
-wss.on("connection", (ws: WS) => {
-  let registered = false;
-  ws.on("message", (data) => {
-    if (registered) return;
-    try {
-      const msg = JSON.parse(data.toString());
-      if (msg.type === "register" && typeof msg.userId === "string") {
-        add(msg.userId, ws);
-        registered = true;
-        ws.send(JSON.stringify({ type: "registered", userId: msg.userId }));
-      } else {
-        ws.close(1003, "First message must be register");
-      }
-    } catch {
-      ws.close(1003, "Invalid JSON");
+redis.subscribe("job-updates");
+redis.on("message", (_channel, msg) => {
+  try {
+    const update = JSON.parse(msg);
+    console.log("📨 Redis message received:", update);
+
+    const ws = jobSubscriptions.get(update.jobId);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      const clientId = clientIds.get(ws);
+      console.log(
+        `📤 Sending update for job ${update.jobId} to client ${clientId}`
+      );
+      ws.send(JSON.stringify(update));
+    } else {
+      console.log(
+        `⚠️ No active WebSocket subscription for job ${update.jobId}`
+      );
+      console.log(`📊 Active subscriptions: ${jobSubscriptions.size}`);
+      console.log(`📊 Connected clients: ${clientIds.size}`);
     }
-  });
-  ws.on("close", () => remove(ws));
-  ws.on("error", () => remove(ws));
+  } catch (error) {
+    console.error("❌ Error processing Redis message:", error);
+  }
 });
 
-async function start() {
-  const redis = createClient({ url: process.env.REDIS_URL });
-  await redis.connect();
+// Start WebSocket server
+Bun.serve({
+  port: 8081,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response("WebSocket server", { status: 200 });
+  },
+  websocket: {
+    open(ws) {
+      const clientId = crypto.randomUUID();
+      clientIds.set(ws, clientId);
+      clientJobs.set(ws, new Set());
+      console.log(`✅ Client connected: ${clientId}`);
+      ws.send(JSON.stringify({ type: "connected", clientId }));
+    },
+    message(ws, message) {
+      try {
+        const data = JSON.parse(message.toString());
+        console.log("📨 WebSocket message received:", data);
 
-  await redis.subscribe("new_screen_call", (message) => {
-    console.log("received a new screen call event inside ws");
+        if (data.action === "subscribe" && data.jobId) {
+          jobSubscriptions.set(data.jobId, ws);
+          clientJobs.get(ws)?.add(data.jobId);
+          const clientId = clientIds.get(ws);
+          console.log(`🔔 Client ${clientId} subscribed to job: ${data.jobId}`);
+          console.log(`📊 Total subscriptions now: ${jobSubscriptions.size}`);
+          ws.send(JSON.stringify({ type: "subscribed", jobId: data.jobId }));
+        }
+      } catch (error) {
+        console.error("❌ Error processing WebSocket message:", error);
+      }
+    },
+    close(ws) {
+      const clientId = clientIds.get(ws);
+      const jobs = clientJobs.get(ws);
 
-    try {
-      const m = JSON.parse(message);
-      if (m?.userId) send(m.userId, { type: "new_screen_call" });
-    } catch {}
-  });
+      // Clean up job subscriptions
+      jobs?.forEach((jobId) => jobSubscriptions.delete(jobId));
 
-  await redis.subscribe("problem_done", (message) => {
-    try {
-      const m = JSON.parse(message);
-      if (m?.userId)
-        send(m.userId, {
-          type: "problem_done",
-          productId: m.productId,
-          status: m.status,
-          productName: m.productName,
-        });
-    } catch {}
-  });
-
-  const port = Number(process.env.PORT ?? 8080);
-  server.listen(port, () => console.log(`WS listening on :${port}`));
-}
-
-start().catch((e) => {
-  console.error(e);
-  process.exit(1);
+      clientIds.delete(ws);
+      clientJobs.delete(ws);
+      console.log(
+        `👋 Client disconnected: ${clientId} (had ${jobs?.size || 0} jobs)`
+      );
+    },
+  },
 });
+
+console.log("✅ WebSocket server running on ws://localhost:8081");
