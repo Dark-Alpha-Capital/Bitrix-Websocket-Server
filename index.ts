@@ -1,4 +1,5 @@
 // WebSocket server for real-time job updates
+// Supports multiple job types: screening, file-upload, bulk-upload, etc.
 import type { ServerWebSocket } from "bun";
 import Redis from "ioredis";
 
@@ -15,28 +16,44 @@ const clientJobs = new Map<WS, Set<string>>();
 // Map: jobId → WebSocket
 const jobSubscriptions = new Map<string, WS>();
 
-redis.subscribe("job-updates");
-redis.on("message", (_channel, msg) => {
+// **EXPANDABLE CHANNELS**
+// Add new channels here for different job types
+const CHANNELS = [
+  "job-updates",      // Existing: deal screening
+  "file-upload",      // New: file upload progress
+  "bulk-upload",      // New: bulk file upload
+  "pdf-extraction",   // New: PDF question extraction
+  // Add more as needed...
+] as const;
+
+// Subscribe to all channels
+CHANNELS.forEach((channel) => {
+  redis.subscribe(channel);
+  console.log(`✅ Subscribed to channel: ${channel}`);
+});
+
+redis.on("message", (channel, msg) => {
   try {
     const update = JSON.parse(msg);
-    console.log("📨 Redis message received:", update);
+    console.log(`📨 Redis message on [${channel}]:`, update);
 
     const ws = jobSubscriptions.get(update.jobId);
     if (ws && ws.readyState === WebSocket.OPEN) {
       const clientId = clientIds.get(ws);
       console.log(
-        `📤 Sending update for job ${update.jobId} to client ${clientId}`
+        `📤 Sending ${channel} update for job ${update.jobId} to client ${clientId}`
       );
-      ws.send(JSON.stringify(update));
+      // Add channel info to the message
+      ws.send(JSON.stringify({ ...update, channel }));
     } else {
       console.log(
-        `⚠️ No active WebSocket subscription for job ${update.jobId}`
+        `⚠️ No active WebSocket subscription for job ${update.jobId} on ${channel}`
       );
       console.log(`📊 Active subscriptions: ${jobSubscriptions.size}`);
       console.log(`📊 Connected clients: ${clientIds.size}`);
     }
   } catch (error) {
-    console.error("❌ Error processing Redis message:", error);
+    console.error(`❌ Error processing Redis message on ${channel}:`, error);
   }
 });
 
